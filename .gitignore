@@ -1,0 +1,27 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Dependency directories
+vendor/
+node_modules/
+
+# Logs
+logs/
+*.log
+
+# Environment and local config
+.env
+.env.*
+include/config.php
+
+# Build/cache/temp
+*.cache
+cache/
+tmp/
