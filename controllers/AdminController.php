@@ -18,8 +18,18 @@ class AdminController
             return;
         }
 
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $page === 'chat-submit') {
+            $this->handleChatRequest();
+            return;
+        }
+
         if ($page === 'api-key' || $page === 'settings') {
             $this->showApiKeyForm();
+            return;
+        }
+
+        if ($page === 'chat') {
+            $this->showChatPage();
             return;
         }
 
@@ -69,6 +79,62 @@ class AdminController
         require APP_BASE_PATH . '/includes/header.php';
         require APP_BASE_PATH . '/layouts/sidebar.php';
         require APP_BASE_PATH . '/views/dashboard.php';
+        require APP_BASE_PATH . '/includes/footer.php';
+    }
+
+    public function showChatPage(): void
+    {
+        $currentPage = 'chat';
+        $prompt = '';
+        $aiResponse = null;
+        $errorMessage = null;
+        $totalTokens = null;
+
+        require APP_BASE_PATH . '/includes/header.php';
+        require APP_BASE_PATH . '/layouts/sidebar.php';
+        require APP_BASE_PATH . '/views/chat.php';
+        require APP_BASE_PATH . '/includes/footer.php';
+    }
+
+    public function handleChatRequest(): void
+    {
+        $currentPage = 'chat';
+        $prompt = post('prompt');
+        $aiResponse = null;
+        $errorMessage = null;
+        $totalTokens = null;
+
+        if ($prompt === '') {
+            $errorMessage = 'Please enter a prompt before submitting.';
+        } else {
+            $setting = $this->getSettings();
+            $standardApiKey = trim((string) ($setting['standard_api_key'] ?? ''));
+
+            if ($standardApiKey === '') {
+                $errorMessage = 'Standard API key is missing. Please configure it in API Key Settings.';
+                logErrorMessage('Chat request blocked: missing standard_api_key.');
+            } else {
+                $chatResult = callOpenAIChat($standardApiKey, $prompt);
+
+                if (!($chatResult['success'] ?? false)) {
+                    $errorMessage = (string) ($chatResult['message'] ?? 'Chat request failed.');
+                } else {
+                    $payload = $chatResult['payload'] ?? [];
+                    $messageContent = $payload['choices'][0]['message']['content'] ?? null;
+                    $aiResponse = is_string($messageContent) ? trim($messageContent) : null;
+                    $totalTokens = isset($payload['usage']['total_tokens']) ? (int) $payload['usage']['total_tokens'] : null;
+
+                    if ($aiResponse === null || $aiResponse === '') {
+                        $errorMessage = 'OpenAI API returned an empty response message.';
+                        logErrorMessage('Chat completion succeeded but choices[0].message.content was empty.');
+                    }
+                }
+            }
+        }
+
+        require APP_BASE_PATH . '/includes/header.php';
+        require APP_BASE_PATH . '/layouts/sidebar.php';
+        require APP_BASE_PATH . '/views/chat.php';
         require APP_BASE_PATH . '/includes/footer.php';
     }
 
