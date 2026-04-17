@@ -14,15 +14,11 @@ class AdminController
     public function handleRequest(string $page): void
     {
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && $page === 'save-api-key') {
-            $this->saveApiKey();
+            $this->saveApiKeys();
             return;
         }
 
-        if (!$this->hasApiKey() && $page !== 'api-key') {
-            redirect_to('index.php?page=api-key');
-        }
-
-        if ($page === 'api-key') {
+        if ($page === 'api-key' || $page === 'settings') {
             $this->showApiKeyForm();
             return;
         }
@@ -34,7 +30,8 @@ class AdminController
     {
         $currentPage = 'api-key';
         $setting = $this->getSettings();
-        $maskedApiKey = mask_api_key($setting['openai_api_key'] ?? null);
+        $maskedStandardApiKey = maskApiKey($setting['standard_api_key'] ?? null);
+        $maskedAdminApiKey = maskApiKey($setting['admin_api_key'] ?? null);
 
         require APP_BASE_PATH . '/includes/header.php';
         require APP_BASE_PATH . '/layouts/sidebar.php';
@@ -42,37 +39,23 @@ class AdminController
         require APP_BASE_PATH . '/includes/footer.php';
     }
 
-    public function saveApiKey(): void
+    public function saveApiKeys(): void
     {
-        $apiKey = post('openai_api_key');
-
-        if ($apiKey === '') {
-            set_flash_message('error', 'API key is required.');
-            redirect_to('index.php?page=api-key');
-        }
+        $standardApiKey = post('standard_api_key');
+        $adminApiKey = post('admin_api_key');
 
         try {
-            $existing = $this->getSettings();
-
-            if ($existing) {
-                $sql = 'UPDATE settings SET openai_api_key = :openai_api_key, updated_at = NOW() WHERE id = :id';
-                $stmt = $this->db->prepare($sql);
-                $stmt->execute([
-                    ':openai_api_key' => $apiKey,
-                    ':id' => $existing['id'],
-                ]);
-            } else {
-                $sql = 'INSERT INTO settings (openai_api_key, created_at, updated_at) VALUES (:openai_api_key, NOW(), NOW())';
-                $stmt = $this->db->prepare($sql);
-                $stmt->execute([':openai_api_key' => $apiKey]);
+            $saved = saveApiKeys($standardApiKey, $adminApiKey);
+            if (!$saved) {
+                throw new RuntimeException('saveApiKeys returned false');
             }
 
-            write_log('API key saved/updated successfully.');
-            set_flash_message('success', 'API key saved successfully.');
+            logAppMessage('API keys saved/updated successfully.');
+            set_flash_message('success', 'API keys saved successfully.');
             redirect_to('index.php?page=dashboard');
         } catch (Throwable $e) {
-            write_log('Failed to save API key: ' . $e->getMessage(), 'ERROR', true);
-            set_flash_message('error', 'Failed to save API key. Check logs/error.log.');
+            logErrorMessage('Failed to save API keys: ' . $e->getMessage());
+            set_flash_message('error', 'Failed to save API keys. Check logs/error.log.');
             redirect_to('index.php?page=api-key');
         }
     }
@@ -81,7 +64,7 @@ class AdminController
     {
         $currentPage = 'dashboard';
         $setting = $this->getSettings();
-        $usageData = $this->getOrRefreshUsageData();
+        $usageData = $this->syncUsageData();
 
         require APP_BASE_PATH . '/includes/header.php';
         require APP_BASE_PATH . '/layouts/sidebar.php';
@@ -89,176 +72,134 @@ class AdminController
         require APP_BASE_PATH . '/includes/footer.php';
     }
 
-    private function hasApiKey(): bool
-    {
-        $setting = $this->getSettings();
-        return !empty($setting['openai_api_key']);
-    }
-
-    private function getSettings(): ?array
-    {
-        $stmt = $this->db->prepare('SELECT * FROM settings ORDER BY id DESC LIMIT 1');
-        $stmt->execute();
-        $row = $stmt->fetch();
-
-        return $row ?: null;
-    }
-
-    private function getOrRefreshUsageData(): array
+    public function syncUsageData(): array
     {
         $records = $this->loadCachedUsageRecords();
-        $lastRecord = $records[0] ?? null;
+        $latestRecord = $records[0] ?? null;
 
-        if ($lastRecord && isset($lastRecord['updated_at'])) {
-            $age = time() - strtotime($lastRecord['updated_at']);
+        $adminApiKey = trim((string) getSetting('admin_api_key'));
+        $standardApiKey = trim((string) getSetting('standard_api_key'));
+
+        if ($adminApiKey === '') {
+            logErrorMessage('Dashboard sync blocked: missing admin API key.');
+
+            return [
+                'status' => 'missing_admin_key',
+                'message' => 'Admin API key is required to fetch organization usage data. Normal/project API keys may not work for organization endpoints.',
+                'records' => $records,
+                'diagnostics' => [
+                    'standard_api_key_configured' => $standardApiKey !== '',
+                    'admin_api_key_configured' => false,
+                    'last_http_code' => $latestRecord['last_http_code'] ?? null,
+                    'last_sync_status' => $latestRecord['last_sync_status'] ?? 'missing_admin_key',
+                    'last_successful_sync_at' => $latestRecord['last_successful_sync_at'] ?? null,
+                    'last_sync_error' => $latestRecord['last_sync_error'] ?? null,
+                ],
+            ];
+        }
+
+        if ($latestRecord && isset($latestRecord['updated_at'])) {
+            $age = time() - strtotime((string) $latestRecord['updated_at']);
             if ($age < USAGE_CACHE_TTL_SECONDS) {
-                write_log('Loaded usage data from cache.');
+                logAppMessage('Loaded usage data from cache.');
+
                 return [
                     'status' => 'cached',
                     'message' => null,
                     'records' => $records,
+                    'diagnostics' => [
+                        'standard_api_key_configured' => $standardApiKey !== '',
+                        'admin_api_key_configured' => true,
+                        'last_http_code' => $latestRecord['last_http_code'] ?? null,
+                        'last_sync_status' => $latestRecord['last_sync_status'] ?? 'cached',
+                        'last_successful_sync_at' => $latestRecord['last_successful_sync_at'] ?? null,
+                        'last_sync_error' => $latestRecord['last_sync_error'] ?? null,
+                    ],
                 ];
             }
         }
 
-        $apiKey = $this->getSettings()['openai_api_key'] ?? '';
-        if ($apiKey === '') {
+        $usageResponse = fetchOpenAIOrgUsage($adminApiKey, USAGE_CACHE_DAYS);
+        $httpCode = (int) ($usageResponse['http_code'] ?? 0);
+
+        if (!$usageResponse['success']) {
+            $message = $usageResponse['message'] ?? 'Unknown OpenAI usage API error.';
+            $this->updateCacheSyncMetadata('failed', $message, $httpCode, null);
+
             return [
                 'status' => 'error',
-                'message' => 'API key is not configured.',
-                'records' => $records,
-            ];
-        }
-
-        $fetched = $this->fetchUsageFromOpenAI($apiKey);
-
-        if ($fetched['success']) {
-            $this->replaceUsageCache($fetched['daily']);
-            $updatedRecords = $this->loadCachedUsageRecords();
-            return [
-                'status' => 'fresh',
-                'message' => null,
-                'records' => $updatedRecords,
-            ];
-        }
-
-        write_log('Failed to fetch usage data: ' . $fetched['message'], 'ERROR', true);
-
-        return [
-            'status' => 'error',
-            'message' => $fetched['message'],
-            'records' => $records,
-        ];
-    }
-
-    private function fetchUsageFromOpenAI(string $apiKey): array
-    {
-        $endTime = time();
-        $startTime = strtotime('-' . USAGE_CACHE_DAYS . ' days');
-        $query = http_build_query([
-            'start_time' => $startTime,
-            'end_time' => $endTime,
-            'bucket_width' => '1d',
-            'limit' => USAGE_CACHE_DAYS,
-        ]);
-
-        $url = $this->config['openai']['usage_endpoint'] . '?' . $query;
-        $caBundlePath = $this->resolveCaBundlePath();
-
-        $ch = curl_init($url);
-        $curlOptions = [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => (int) $this->config['openai']['timeout_seconds'],
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HTTPHEADER => [
-                'Authorization: Bearer ' . $apiKey,
-                'Content-Type: application/json',
-            ],
-        ];
-
-        if ($caBundlePath !== null) {
-            $curlOptions[CURLOPT_CAINFO] = $caBundlePath;
-        }
-
-        curl_setopt_array($ch, $curlOptions);
-
-        $responseBody = curl_exec($ch);
-        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        if ($responseBody === false || $curlError) {
-            $message = 'cURL error while requesting usage API: ' . $curlError;
-
-            if (stripos($curlError, 'unable to get local issuer certificate') !== false) {
-                $message .= ' Please configure a valid CA bundle (php.ini: curl.cainfo / openssl.cafile or config openai.ca_bundle_path).';
-            }
-
-            return [
-                'success' => false,
                 'message' => $message,
-                'daily' => [],
+                'records' => $records,
+                'diagnostics' => [
+                    'standard_api_key_configured' => $standardApiKey !== '',
+                    'admin_api_key_configured' => true,
+                    'last_http_code' => $httpCode,
+                    'last_sync_status' => 'failed',
+                    'last_successful_sync_at' => $latestRecord['last_successful_sync_at'] ?? null,
+                    'last_sync_error' => $message,
+                ],
             ];
         }
 
-        $payload = json_decode($responseBody, true);
-
-        if ($httpCode >= 400) {
-            return [
-                'success' => false,
-                'message' => 'OpenAI API returned HTTP ' . $httpCode,
-                'daily' => [],
-            ];
-        }
-
-        if (!is_array($payload)) {
-            return [
-                'success' => false,
-                'message' => 'Invalid JSON response from usage API.',
-                'daily' => [],
-            ];
-        }
-
-        $daily = $this->parseUsagePayload($payload);
+        $usagePayload = $usageResponse['payload'] ?? [];
+        $daily = $this->parseUsagePayload($usagePayload);
 
         if (empty($daily)) {
+            $message = 'No usage records returned from OpenAI API.';
+            logErrorMessage($message);
+            $this->updateCacheSyncMetadata('failed', $message, $httpCode, null);
+
             return [
-                'success' => false,
-                'message' => 'No usage records returned from OpenAI API.',
-                'daily' => [],
+                'status' => 'error',
+                'message' => $message,
+                'records' => $records,
+                'diagnostics' => [
+                    'standard_api_key_configured' => $standardApiKey !== '',
+                    'admin_api_key_configured' => true,
+                    'last_http_code' => $httpCode,
+                    'last_sync_status' => 'failed',
+                    'last_successful_sync_at' => $latestRecord['last_successful_sync_at'] ?? null,
+                    'last_sync_error' => $message,
+                ],
             ];
         }
 
-        write_log('Fetched usage data from OpenAI API successfully.');
+        $costResponse = fetchOpenAICosts($adminApiKey, USAGE_CACHE_DAYS);
+        if ($costResponse['success']) {
+            $costsByDate = $this->parseCostsPayloadByDate($costResponse['payload'] ?? []);
+            foreach ($daily as &$row) {
+                if (isset($costsByDate[$row['usage_date']])) {
+                    $row['total_cost_usd'] = $costsByDate[$row['usage_date']];
+                }
+            }
+            unset($row);
+        } else {
+            logErrorMessage('Costs endpoint fetch failed; continuing with usage payload cost fields if available. Message: ' . ($costResponse['message'] ?? 'unknown'));
+        }
+
+        $successTimestamp = date('Y-m-d H:i:s');
+        $this->replaceUsageCache($daily, 'success', null, $httpCode, $successTimestamp);
+        $updatedRecords = $this->loadCachedUsageRecords();
+        $latestUpdatedRecord = $updatedRecords[0] ?? null;
 
         return [
-            'success' => true,
+            'status' => 'fresh',
             'message' => null,
-            'daily' => $daily,
+            'records' => $updatedRecords,
+            'diagnostics' => [
+                'standard_api_key_configured' => $standardApiKey !== '',
+                'admin_api_key_configured' => true,
+                'last_http_code' => $latestUpdatedRecord['last_http_code'] ?? $httpCode,
+                'last_sync_status' => $latestUpdatedRecord['last_sync_status'] ?? 'success',
+                'last_successful_sync_at' => $latestUpdatedRecord['last_successful_sync_at'] ?? $successTimestamp,
+                'last_sync_error' => $latestUpdatedRecord['last_sync_error'] ?? null,
+            ],
         ];
     }
 
-    private function resolveCaBundlePath(): ?string
+    private function getSettings(): ?array
     {
-        $candidatePaths = [
-            $this->config['openai']['ca_bundle_path'] ?? null,
-            ini_get('curl.cainfo') ?: null,
-            ini_get('openssl.cafile') ?: null,
-        ];
-
-        foreach ($candidatePaths as $path) {
-            if (!is_string($path)) {
-                continue;
-            }
-
-            $trimmedPath = trim($path);
-            if ($trimmedPath !== '' && is_readable($trimmedPath)) {
-                return $trimmedPath;
-            }
-        }
-
-        return null;
+        return getLatestSettingsRow($this->db);
     }
 
     private function parseUsagePayload(array $payload): array
@@ -313,7 +254,32 @@ class AdminController
         return $rows;
     }
 
-    private function replaceUsageCache(array $records): void
+    private function parseCostsPayloadByDate(array $payload): array
+    {
+        $costByDate = [];
+
+        foreach (($payload['data'] ?? []) as $bucket) {
+            $bucketDate = isset($bucket['start_time']) ? date('Y-m-d', (int) $bucket['start_time']) : null;
+            if ($bucketDate === null) {
+                continue;
+            }
+
+            $bucketCost = 0.0;
+            foreach (($bucket['results'] ?? []) as $result) {
+                if (isset($result['amount']['value'])) {
+                    $bucketCost += (float) $result['amount']['value'];
+                } elseif (isset($result['cost_usd'])) {
+                    $bucketCost += (float) $result['cost_usd'];
+                }
+            }
+
+            $costByDate[$bucketDate] = $bucketCost;
+        }
+
+        return $costByDate;
+    }
+
+    private function replaceUsageCache(array $records, string $syncStatus, ?string $syncError, int $httpCode, ?string $successTimestamp): void
     {
         $this->db->beginTransaction();
 
@@ -333,6 +299,10 @@ class AdminController
                 total_images,
                 total_cost_usd,
                 raw_json,
+                last_sync_status,
+                last_sync_error,
+                last_http_code,
+                last_successful_sync_at,
                 created_at,
                 updated_at
             ) VALUES (
@@ -347,6 +317,10 @@ class AdminController
                 :total_images,
                 :total_cost_usd,
                 :raw_json,
+                :last_sync_status,
+                :last_sync_error,
+                :last_http_code,
+                :last_successful_sync_at,
                 NOW(),
                 NOW()
             )';
@@ -366,16 +340,40 @@ class AdminController
                     ':total_images' => $record['total_images'],
                     ':total_cost_usd' => $record['total_cost_usd'],
                     ':raw_json' => $record['raw_json'],
+                    ':last_sync_status' => $syncStatus,
+                    ':last_sync_error' => $syncError,
+                    ':last_http_code' => $httpCode > 0 ? $httpCode : null,
+                    ':last_successful_sync_at' => $successTimestamp,
                 ]);
             }
 
             $this->db->commit();
-            write_log('Usage cache refreshed successfully. Total rows: ' . count($records));
+            logAppMessage('Usage cache refreshed successfully. Total rows: ' . count($records));
         } catch (Throwable $e) {
             $this->db->rollBack();
-            write_log('Failed to refresh usage cache: ' . $e->getMessage(), 'ERROR', true);
+            logErrorMessage('Failed to refresh usage cache: ' . $e->getMessage());
             throw $e;
         }
+    }
+
+    private function updateCacheSyncMetadata(string $syncStatus, ?string $syncError, int $httpCode, ?string $successTimestamp): void
+    {
+        $sql = 'UPDATE usage_cache
+                SET last_sync_status = :last_sync_status,
+                    last_sync_error = :last_sync_error,
+                    last_http_code = :last_http_code,
+                    last_successful_sync_at = COALESCE(:last_successful_sync_at, last_successful_sync_at),
+                    updated_at = NOW()
+                WHERE interval_type = :interval_type';
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            ':last_sync_status' => $syncStatus,
+            ':last_sync_error' => $syncError,
+            ':last_http_code' => $httpCode > 0 ? $httpCode : null,
+            ':last_successful_sync_at' => $successTimestamp,
+            ':interval_type' => 'daily',
+        ]);
     }
 
     private function loadCachedUsageRecords(): array

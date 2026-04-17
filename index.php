@@ -6,7 +6,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/controllers/AdminController.php';
 
 $page = isset($_GET['page']) ? trim((string) $_GET['page']) : 'dashboard';
-$allowedPages = ['dashboard', 'api-key', 'save-api-key'];
+$allowedPages = ['dashboard', 'api-key', 'settings', 'save-api-key'];
 
 if (!in_array($page, $allowedPages, true)) {
     $page = 'dashboard';

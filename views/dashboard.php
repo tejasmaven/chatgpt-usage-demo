@@ -1,13 +1,26 @@
 <main class="content">
     <h2>Usage Dashboard</h2>
 
+    <?php $diagnostics = $usageData['diagnostics'] ?? []; ?>
+
     <div class="card">
-        <p><strong>API key status:</strong> <?php echo !empty($setting['openai_api_key']) ? 'Configured' : 'Missing'; ?></p>
-        <p><strong>Last updated:</strong> <?php echo isset($usageData['records'][0]['updated_at']) ? h($usageData['records'][0]['updated_at']) : 'Never'; ?></p>
+        <p><strong>Standard API Key configured:</strong> <?php echo !empty($diagnostics['standard_api_key_configured']) ? 'Yes' : 'No'; ?></p>
+        <p><strong>Admin API Key configured:</strong> <?php echo !empty($diagnostics['admin_api_key_configured']) ? 'Yes' : 'No'; ?></p>
+        <p><strong>Last OpenAI HTTP code:</strong> <?php echo isset($diagnostics['last_http_code']) && $diagnostics['last_http_code'] !== null ? h((string) $diagnostics['last_http_code']) : 'N/A'; ?></p>
+        <p><strong>Last sync result:</strong> <?php echo h((string) ($diagnostics['last_sync_status'] ?? $usageData['status'] ?? 'unknown')); ?></p>
+        <p><strong>Last successful sync:</strong> <?php echo !empty($diagnostics['last_successful_sync_at']) ? h((string) $diagnostics['last_successful_sync_at']) : 'Never'; ?></p>
         <p><strong>Data source:</strong> <?php echo h($usageData['status']); ?></p>
 
         <?php if (!empty($usageData['message'])): ?>
-            <p class="error-text">Could not fetch latest data: <?php echo h($usageData['message']); ?></p>
+            <p class="warning-text"><?php echo h($usageData['message']); ?></p>
+        <?php endif; ?>
+
+        <?php if (!empty($diagnostics['last_sync_error'])): ?>
+            <p class="error-text"><strong>Last sync error:</strong> <?php echo h((string) $diagnostics['last_sync_error']); ?></p>
+        <?php endif; ?>
+
+        <?php if (($usageData['status'] ?? '') === 'missing_admin_key'): ?>
+            <p><a href="index.php?page=api-key">Go to API Key Settings</a></p>
         <?php endif; ?>
     </div>
 
@@ -23,7 +36,7 @@
         'cost' => 0.0,
     ];
 
-    foreach ($usageData['records'] as $row) {
+    foreach (($usageData['records'] ?? []) as $row) {
         $totals['requests'] += (int) $row['total_requests'];
         $totals['text_input'] += (int) $row['total_text_input_tokens'];
         $totals['text_output'] += (int) $row['total_text_output_tokens'];
