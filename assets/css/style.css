@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Arial, sans-serif; background: #f3f5f7; color: #222; }
+.topbar { background: #1f2937; color: #fff; padding: 12px 20px; }
+.container { display: flex; min-height: calc(100vh - 96px); }
+.sidebar { width: 220px; background: #111827; padding: 20px; }
+.sidebar ul { list-style: none; padding: 0; margin: 0; }
+.sidebar a { display: block; color: #d1d5db; text-decoration: none; padding: 10px; border-radius: 6px; margin-bottom: 8px; }
+.sidebar a.active, .sidebar a:hover { background: #374151; color: #fff; }
+.content { flex: 1; padding: 20px; }
+.card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.metric-card { background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.metric-card h3 { margin: 0 0 6px 0; font-size: 14px; color: #4b5563; }
+.metric-card p { margin: 0; font-size: 20px; font-weight: bold; }
+.stack { display: flex; flex-direction: column; gap: 10px; max-width: 500px; }
+input[type="password"] { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+button { background: #2563eb; color: #fff; border: none; padding: 10px 14px; border-radius: 6px; cursor: pointer; }
+button:hover { background: #1d4ed8; }
+table { width: 100%; border-collapse: collapse; background: #fff; }
+th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 13px; }
+th { background: #f9fafb; }
+.flash { margin: 16px; padding: 10px; border-radius: 6px; }
+.flash-success { background: #dcfce7; color: #166534; }
+.flash-error { background: #fee2e2; color: #b91c1c; }
+.error-text { color: #b91c1c; }
+.footer { background: #fff; border-top: 1px solid #e5e7eb; padding: 12px 20px; }
