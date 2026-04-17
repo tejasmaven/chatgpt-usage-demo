@@ -240,6 +240,99 @@ function fetchOpenAICosts(string $adminApiKey, int $days = 30): array
     return requestOpenAIEndpoint($config['openai']['costs_endpoint'], $adminApiKey, $days);
 }
 
+function callOpenAIChat(string $apiKey, string $prompt): array
+{
+    global $config;
+
+    $url = 'https://api.openai.com/v1/chat/completions';
+    $payload = [
+        'model' => 'gpt-4o-mini',
+        'messages' => [
+            [
+                'role' => 'user',
+                'content' => $prompt,
+            ],
+        ],
+        'max_tokens' => 200,
+    ];
+
+    $ch = curl_init($url);
+    $curlOptions = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_TIMEOUT => (int) ($config['openai']['timeout_seconds'] ?? 30),
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload),
+    ];
+
+    $caBundlePath = resolveCaBundlePath($config);
+    if ($caBundlePath !== null) {
+        $curlOptions[CURLOPT_CAINFO] = $caBundlePath;
+    }
+
+    curl_setopt_array($ch, $curlOptions);
+
+    $responseBody = curl_exec($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($responseBody === false || $curlError !== '') {
+        $errorMessage = 'cURL error while requesting chat completions: ' . $curlError;
+        logErrorMessage($errorMessage);
+
+        return [
+            'success' => false,
+            'message' => 'Unable to connect to OpenAI API. Please try again later.',
+            'payload' => null,
+            'http_code' => 0,
+        ];
+    }
+
+    $decoded = json_decode($responseBody, true);
+
+    if ($httpCode < 200 || $httpCode >= 300) {
+        $apiError = is_array($decoded) ? ($decoded['error']['message'] ?? null) : null;
+        $friendly = 'OpenAI API request failed with HTTP ' . $httpCode . '.';
+        if (is_string($apiError) && $apiError !== '') {
+            $friendly .= ' ' . $apiError;
+        }
+
+        logErrorMessage('Chat API request failed | http_code=' . $httpCode . ' | response_body=' . $responseBody);
+
+        return [
+            'success' => false,
+            'message' => $friendly,
+            'payload' => is_array($decoded) ? $decoded : null,
+            'http_code' => $httpCode,
+        ];
+    }
+
+    if (!is_array($decoded)) {
+        logErrorMessage('Malformed chat completion response JSON | http_code=' . $httpCode . ' | response_body=' . $responseBody);
+
+        return [
+            'success' => false,
+            'message' => 'Malformed response from OpenAI API.',
+            'payload' => null,
+            'http_code' => $httpCode,
+        ];
+    }
+
+    return [
+        'success' => true,
+        'message' => null,
+        'payload' => $decoded,
+        'http_code' => $httpCode,
+    ];
+}
+
 function format_number($value): string
 {
     return number_format((float) $value, 0, '.', ',');
