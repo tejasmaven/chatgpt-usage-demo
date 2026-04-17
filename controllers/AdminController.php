@@ -163,16 +163,25 @@ class AdminController
         ]);
 
         $url = $this->config['openai']['usage_endpoint'] . '?' . $query;
+        $caBundlePath = $this->resolveCaBundlePath();
 
         $ch = curl_init($url);
-        curl_setopt_array($ch, [
+        $curlOptions = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => (int) $this->config['openai']['timeout_seconds'],
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER => [
                 'Authorization: Bearer ' . $apiKey,
                 'Content-Type: application/json',
             ],
-        ]);
+        ];
+
+        if ($caBundlePath !== null) {
+            $curlOptions[CURLOPT_CAINFO] = $caBundlePath;
+        }
+
+        curl_setopt_array($ch, $curlOptions);
 
         $responseBody = curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -180,9 +189,15 @@ class AdminController
         curl_close($ch);
 
         if ($responseBody === false || $curlError) {
+            $message = 'cURL error while requesting usage API: ' . $curlError;
+
+            if (stripos($curlError, 'unable to get local issuer certificate') !== false) {
+                $message .= ' Please configure a valid CA bundle (php.ini: curl.cainfo / openssl.cafile or config openai.ca_bundle_path).';
+            }
+
             return [
                 'success' => false,
-                'message' => 'cURL error while requesting usage API: ' . $curlError,
+                'message' => $message,
                 'daily' => [],
             ];
         }
@@ -222,6 +237,28 @@ class AdminController
             'message' => null,
             'daily' => $daily,
         ];
+    }
+
+    private function resolveCaBundlePath(): ?string
+    {
+        $candidatePaths = [
+            $this->config['openai']['ca_bundle_path'] ?? null,
+            ini_get('curl.cainfo') ?: null,
+            ini_get('openssl.cafile') ?: null,
+        ];
+
+        foreach ($candidatePaths as $path) {
+            if (!is_string($path)) {
+                continue;
+            }
+
+            $trimmedPath = trim($path);
+            if ($trimmedPath !== '' && is_readable($trimmedPath)) {
+                return $trimmedPath;
+            }
+        }
+
+        return null;
     }
 
     private function parseUsagePayload(array $payload): array
