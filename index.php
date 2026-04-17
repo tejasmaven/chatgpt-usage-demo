@@ -5,6 +5,7 @@ require_once __DIR__ . '/includes/session.php';
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/controllers/AdminController.php';
 
+print "hi";die;
 $page = isset($_GET['page']) ? trim((string) $_GET['page']) : 'dashboard';
 $allowedPages = ['dashboard', 'api-key', 'save-api-key'];
 
