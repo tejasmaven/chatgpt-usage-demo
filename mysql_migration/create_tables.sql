@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS settings (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    openai_api_key VARCHAR(255) NOT NULL,
+    standard_api_key VARCHAR(255) NULL,
+    admin_api_key VARCHAR(255) NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -18,6 +19,10 @@ CREATE TABLE IF NOT EXISTS usage_cache (
     total_images BIGINT UNSIGNED NOT NULL DEFAULT 0,
     total_cost_usd DECIMAL(15,6) NULL DEFAULT NULL,
     raw_json LONGTEXT NULL,
+    last_sync_status VARCHAR(30) NULL,
+    last_sync_error TEXT NULL,
+    last_http_code INT NULL,
+    last_successful_sync_at DATETIME NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     UNIQUE KEY uniq_usage_date_interval (usage_date, interval_type),

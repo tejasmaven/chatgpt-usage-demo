@@ -13,7 +13,7 @@ body { margin: 0; font-family: Arial, sans-serif; background: #f3f5f7; color: #2
 .metric-card h3 { margin: 0 0 6px 0; font-size: 14px; color: #4b5563; }
 .metric-card p { margin: 0; font-size: 20px; font-weight: bold; }
 .stack { display: flex; flex-direction: column; gap: 10px; max-width: 500px; }
-input[type="password"] { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+input[type="password"], input[type="text"] { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
 button { background: #2563eb; color: #fff; border: none; padding: 10px 14px; border-radius: 6px; cursor: pointer; }
 button:hover { background: #1d4ed8; }
 table { width: 100%; border-collapse: collapse; background: #fff; }
@@ -24,3 +24,6 @@ th { background: #f9fafb; }
 .flash-error { background: #fee2e2; color: #b91c1c; }
 .error-text { color: #b91c1c; }
 .footer { background: #fff; border-top: 1px solid #e5e7eb; padding: 12px 20px; }
+
+.help-text { color: #4b5563; font-size: 12px; }
+.warning-text { color: #92400e; background: #fef3c7; padding: 8px; border-radius: 6px; }
